@@ -73,7 +73,7 @@ export default function LoginPage() {
     }
   }
 
-  // SIGN UP HANDLER WITH AUTOMATIC DUPLICATE CONFLICT RESOLUTION
+  // SIGN UP HANDLER
   async function handleSignUpSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
@@ -97,16 +97,15 @@ export default function LoginPage() {
         password: password,
         options: {
           data: {
-            email_confirmed: true // Force instant confirmation bypass
+            email_confirmed: true
           }
         }
       })
 
       let finalUserId = authData?.user?.id
 
-      // 2. Error handling: if account already exists in Auth but public.profiles profile is missing/incomplete
+      // 2. Error handling: check if account already exists
       if (authError && authError.message.toLowerCase().includes('already registered')) {
-        // Log in instantly to fetch their existing user ID reference safely
         const { data: recoverData, error: recoverError } = await supabase.auth.signInWithPassword({
           email: email.trim(),
           password: password,
@@ -119,7 +118,7 @@ export default function LoginPage() {
         }
         
         finalUserId = recoverData.user.id
-        authError = null // Clear error state to allow schema execution
+        authError = null
       }
 
       if (authError || !finalUserId) {
@@ -128,14 +127,12 @@ export default function LoginPage() {
         return
       }
 
-      const derivedUsername = email.split('@')[0] + Math.floor(1000 + Math.random() * 9000)
-
-      // 3. Use UPSERT instead of INSERT to completely bypass unique key collisions
+      // 3. Use UPSERT with correct structural UUID key
       const { error: insertError } = await supabase
         .from('profiles')
         .upsert([{
           id: finalUserId, 
-          username: derivedUsername,
+          username: username.trim().toLowerCase(),
           email: email.trim(),
           password: password, 
           full_name: `${firstName.trim()} ${lastName.trim()}`.trim(),
@@ -149,7 +146,7 @@ export default function LoginPage() {
         return
       }
 
-      // 4. Authenticate the active workspace token session
+      // 4. Authenticate session
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password: password,
@@ -167,7 +164,6 @@ export default function LoginPage() {
         localStorage.setItem('current_user_id', signInData.user.id)
       }
 
-      // 5. Route cleanly directly onto the dashboard
       router.push('/dashboard')
       router.refresh()
     } catch (err) {
@@ -448,6 +444,17 @@ export default function LoginPage() {
                     style={inputStyle} 
                   />
                 </div>
+                <div>
+                  <label style={labelStyle}>CHOOSE USERNAME</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g., tarun1" 
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    required 
+                    style={inputStyle} 
+                  />
+                </div>
                 <button type="submit" style={submitBtnStyle}>
                   Proceed to Step 2
                 </button>
@@ -567,6 +574,4 @@ export default function LoginPage() {
       </div>
     </div>
   )
-
-  
 }
