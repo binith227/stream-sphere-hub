@@ -1,367 +1,434 @@
-'use client';
+'use client'
+import React, { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
 
-import React, { useState } from 'react';
-// Step out of login, out of app, and directly into your lib folder
-import { supabase } from '../../lib/supabase'; 
+export default function DashboardPage() {
+  const router = useRouter()
+  const [loading, setLoading] = useState(true)
+  const [profile, setProfile] = useState<any>(null)
+  const [subscription, setSubscription] = useState<any>(null)
+  const [totalIncome, setTotalIncome] = useState<number>(0)
+  const [daysRemaining, setDaysRemaining] = useState<number>(30)
+  
+  // Dynamic active user state tracking
+  const [activeUserCount, setActiveUserCount] = useState<number>(0)
+  
+  // Account settings inputs
+  const [emailInput, setEmailInput] = useState('')
+  const [passwordInput, setPasswordInput] = useState('')
+  
+  const [saveLoading, setSaveLoading] = useState(false)
+  const [message, setMessage] = useState({ text: '', isError: false })
 
-export default function LoginPage() {
-  const [isSignUp, setIsSignUp] = useState(true);
-  const [step, setStep] = useState(1);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    checkUserAndFetchData()
+  }, [])
 
-  // Form Fields
-  const [email, setEmail] = useState('');
-  const [username, setUsername] = useState('');
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  async function checkUserAndFetchData() {
+    try {
+      setLoading(true)
+      setMessage({ text: '', isError: false })
 
-  // Toggle Eye visibility states
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+      // Fetch the freshest authentication token directly
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
+      if (userError || !user) {
+        localStorage.clear()
+        router.push('/login')
+        return
+      }
 
-  // Inline CSS Styles
+      // 1. Fetch profile mapping
+      let { data: profileData } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      // 2. Fetch active user subscription metrics
+      const { data: subData } = await supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+        .maybeSingle()
+
+      if (profileData) {
+        setProfile(profileData)
+        setEmailInput(profileData.email || '')
+      }
+
+      if (subData) {
+        setSubscription(subData)
+        calculateCountdown(subData.start_date, subData.end_date)
+      } else {
+        setSubscription(null)
+      }
+
+      // 3. Compile network analytical variables
+      await fetchCompanyIncome()
+      
+      // 4. Gather live global registration metrics
+      await fetchActiveUserMetrics()
+
+    } catch (err: any) {
+      console.error("Data fetch exception: ", err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Aggregate active user metric data rows across profiles database cleanly
+  async function fetchActiveUserMetrics() {
+    try {
+      const { count, error } = await supabase
+        .from('profiles')
+        .select('*', { count: 'exact', head: true })
+
+      if (!error && count !== null) {
+        setActiveUserCount(count)
+      }
+    } catch (err) {
+      console.error("Error updating user tracking metrics: ", err)
+    }
+  }
+
+  // Aggregate active transactional milestones across company databases
+  async function fetchCompanyIncome() {
+    try {
+      const { data: allSubs } = await supabase
+        .from('subscriptions')
+        .select('plan_id')
+        .eq('status', 'active')
+
+      if (allSubs) {
+        const income = allSubs.reduce((acc, curr) => {
+          if (curr.plan_id === 1) return acc + 99
+          if (curr.plan_id === 2) return acc + 299
+          if (curr.plan_id === 3) return acc + 499
+          return acc
+        }, 0)
+        setTotalIncome(income)
+      }
+    } catch (err) {
+      // Fail silently
+    }
+  }
+
+  // Defensive date math: parses ISO strings or injects a 30-day window if data is null
+  function calculateCountdown(startDateString: string, endDateString?: string) {
+    const today = new Date()
+    let expiration: Date
+
+    if (endDateString) {
+      expiration = new Date(endDateString)
+    } else if (startDateString) {
+      const start = new Date(startDateString)
+      expiration = new Date(start.getTime() + 30 * 24 * 60 * 60 * 1000)
+    } else {
+      setDaysRemaining(30)
+      return
+    }
+    
+    const differenceInTime = expiration.getTime() - today.getTime()
+    const diffDays = Math.ceil(differenceInTime / (1000 * 3600 * 24))
+    
+    setDaysRemaining(diffDays > 0 ? diffDays : 0)
+  }
+
+  // Concurrent Mutation Pipeline: Updates profile tier and subscription windows together
+  async function handleSelectPlan(planId: number) {
+    setSaveLoading(true)
+    setMessage({ text: '', isError: false })
+    
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        router.push('/login')
+        return
+      }
+
+      const tierName = planId === 1 ? 'Basic' : planId === 2 ? 'Pro' : 'Enterprise'
+      
+      // Calculate explicitly defined timestamp blocks to save directly to the DB
+      const startTimeISO = new Date().toISOString()
+      const endTimeISO = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+
+      // Step 1: Write explicit validation records to the subscriptions table
+      const { data: newSub, error: subError } = await supabase
+        .from('subscriptions')
+        .insert([{
+          user_id: user.id,
+          plan_id: planId,
+          status: 'active',
+          start_date: startTimeISO,
+          end_date: endTimeISO
+        }])
+        .select()
+        .maybeSingle()
+
+      if (subError) throw subError
+
+      // Step 2: Push human-readable text string back to profile row parameters
+      const { error: profileUpdateError } = await supabase
+        .from('profiles')
+        .update({ subscription_tier: tierName })
+        .eq('id', user.id)
+
+      if (profileUpdateError) throw profileUpdateError
+
+      // Step 3: Local view refresh containing fresh countdown logs
+      setSubscription(newSub)
+      calculateCountdown(startTimeISO, endTimeISO)
+      
+      await checkUserAndFetchData()
+      setMessage({ text: 'Infrastructure tier successfully provisioned!', isError: false })
+    } catch (err: any) {
+      setMessage({ text: err.message || 'Error processing database update sync.', isError: true })
+    } finally {
+      setSaveLoading(false)
+    }
+  }
+
+  // Teardown subscriber links gracefully
+  async function handleCancelSubscription() {
+    setSaveLoading(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      await supabase.from('subscriptions').delete().eq('user_id', user.id)
+      await supabase.from('profiles').update({ subscription_tier: 'none' }).eq('id', user.id)
+
+      setSubscription(null)
+      await checkUserAndFetchData()
+      setMessage({ text: 'Active specifications detached safely.', isError: false })
+    } catch (err: any) {
+      setMessage({ text: 'Error executing subscription termination route.', isError: true })
+    } finally {
+      setSaveLoading(false)
+    }
+  }
+
+  async function handleUpdateCredentials(e: React.FormEvent) {
+    e.preventDefault()
+    setMessage({ text: '', isError: false })
+    setSaveLoading(true)
+
+    try {
+      const updatePayload: any = { email: emailInput.trim() }
+      if (passwordInput) updatePayload.password = passwordInput
+
+      const { error } = await supabase
+        .from('profiles')
+        .update(updatePayload)
+        .eq('id', profile.id)
+
+      if (error) throw error
+
+      setMessage({ text: 'Account settings parameters modified successfully.', isError: false })
+      setPasswordInput('')
+      checkUserAndFetchData()
+    } catch (err: any) {
+      setMessage({ text: err.message || 'Error executing credential update.', isError: true })
+    } finally {
+      setSaveLoading(false)
+    }
+  }
+
+  async function handleSignOut() {
+    await supabase.auth.signOut()
+    localStorage.clear()
+    router.push('/login')
+    router.refresh()
+  }
+
+  // PRESENTATION STYLES
   const containerStyle: React.CSSProperties = {
-    backgroundColor: '#020617',
     minHeight: '100vh',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
+    background: '#020617',
+    color: '#ffffff',
     fontFamily: 'sans-serif',
-    padding: '20px',
-  };
+    padding: '40px 20px',
+    boxSizing: 'border-box'
+  }
+
+  const navStyle: React.CSSProperties = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    maxWidth: '1200px',
+    margin: '0 auto 40px auto',
+    borderBottom: '1px solid #1e293b',
+    paddingBottom: '20px'
+  }
 
   const cardStyle: React.CSSProperties = {
-    backgroundColor: '#0f172a',
-    borderRadius: '16px',
-    padding: '40px',
-    width: '100%',
-    maxWidth: '480px',
+    background: '#0f172a',
     border: '1px solid #1e293b',
-    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3)',
-  };
+    borderRadius: '16px',
+    padding: '32px',
+    display: 'flex',
+    flexDirection: 'column',
+    position: 'relative',
+    textAlign: 'left'
+  }
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: '11px',
+    fontWeight: '700',
+    color: '#64748b',
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase',
+    marginBottom: '8px'
+  }
+
+  const metricStyle: React.CSSProperties = {
+    fontSize: '36px',
+    fontWeight: '800',
+    margin: '0 0 4px 0',
+    color: '#ffffff'
+  }
 
   const inputStyle: React.CSSProperties = {
     width: '100%',
-    padding: '14px 16px',
-    backgroundColor: '#1e293b',
-    border: '1px solid #334155',
+    background: '#020617',
+    border: '1px solid #1e293b',
     borderRadius: '8px',
-    color: '#f8fafc',
-    fontSize: '15px',
-    marginTop: '8px',
-    marginBottom: '20px',
-    boxSizing: 'border-box',
-    outline: 'none',
-  };
-
-  const labelStyle: React.CSSProperties = {
-    color: '#94a3b8',
-    fontSize: '12px',
-    fontWeight: '600',
-    letterSpacing: '0.05em',
-  };
-
-  const linkStyle: React.CSSProperties = {
-    background: 'none',
-    border: 'none',
-    color: '#818cf8',
-    fontWeight: '600',
-    marginLeft: '6px',
-    cursor: 'pointer',
+    padding: '12px',
+    color: '#ffffff',
     fontSize: '14px',
-    textDecoration: 'underline',
-  };
+    outline: 'none',
+    boxSizing: 'border-box',
+    marginBottom: '16px'
+  }
 
-  const eyeBtnStyle: React.CSSProperties = {
-    position: 'absolute',
-    right: '16px',
-    top: '43px',
-    background: 'none',
-    border: 'none',
-    color: '#818cf8',
-    fontSize: '12px',
-    fontWeight: '700',
-    cursor: 'pointer',
-  };
-
-  const validatePassword = (pass: string) => {
-    const hasLetters = /[a-zA-Z]/.test(pass);
-    const hasNumbers = /[0-9]/.test(pass);
-    const hasSpecial = /[^a-zA-Z0-9]/.test(pass);
-    return hasLetters && hasNumbers && hasSpecial;
-  };
-
-  const handleStepOneSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    if (!email.trim() || !username.trim() || !firstName.trim() || !lastName.trim()) {
-      setError('All fields are required to proceed.');
-      return;
-    }
-    setStep(2);
-  };
-
-  const handleStepTwoSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-
-    if (password !== confirmPassword) {
-      setError('Passwords do not match.');
-      setLoading(false);
-      return;
-    }
-
-    if (!validatePassword(password)) {
-      setError('Password must contain letters, numbers, and at least one special character.');
-      setLoading(false);
-      return;
-    }
-
-    try {
-      // 1. Authenticate with Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password,
-      });
-
-      if (authError) throw authError;
-
-      if (authData?.user) {
-        const combinedFullName = `${firstName.trim()} ${lastName.trim()}`;
-        
-        // Match the default abstract profile asset used in your table records
-        const defaultAvatar = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150';
-
-        // 2. Insert record into profiles table, securely adding password and avatar url
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .upsert({
-            id: authData.user.id, 
-            username: username.toLowerCase().trim(),
-            full_name: combinedFullName,
-            email: email.toLowerCase().trim(),
-            password: password,            // Explicitly saves the password to the profiles table
-            avatar_url: defaultAvatar,     // Explicitly saves the profile image url 
-            subscription_tier: 'none'
-          });
-
-        if (profileError) throw profileError;
-
-        window.location.href = '/dashboard';
-      }
-    } catch (err: any) {
-      setError(err.message || 'An error occurred during sign up.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLoginSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-
-    try {
-      const { error: loginError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (loginError) throw loginError;
-
-      window.location.href = '/dashboard';
-    } catch (err: any) {
-      setError(err.message || 'Invalid login credentials.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  if (loading) {
+    return (
+      <div style={{ ...containerStyle, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <p style={{ color: '#64748b', fontSize: '14px' }}>Loading operational layout parameters...</p>
+      </div>
+    )
+  }
 
   return (
     <div style={containerStyle}>
-      <div style={cardStyle}>
-        
-        <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-          <div style={{ display: 'inline-flex', padding: '12px', backgroundColor: '#1e293b', borderRadius: '50%', marginBottom: '16px' }}>
-            <span style={{ fontSize: '20px' }}>👁️</span>
+      {/* SHARED WORKSPACE NAVIGATION */}
+      <nav style={navStyle}>
+        <div style={{ fontSize: '24px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: '#000000', border: '1px solid #1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg style={{ width: '20px', height: '20px', color: '#818cf8' }} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
           </div>
-          <h1 style={{ color: '#ffffff', fontSize: '32px', fontWeight: '800', margin: '0 0 8px 0', letterSpacing: '-0.025em' }}>
-            StreamSphere
-          </h1>
-          {isSignUp && (
-            <p style={{ color: '#64748b', fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-              STEP {step} OF 2 — {step === 1 ? 'REGISTRATION' : 'SECURITY'}
-            </p>
-          )}
+          StreamSphere Workspace
         </div>
+        <button onClick={handleSignOut} style={{ background: '#1e293b', color: '#f87171', border: 'none', borderRadius: '8px', padding: '10px 16px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
+          Terminate Session
+        </button>
+      </nav>
 
-        {error && (
-          <div style={{ padding: '12px 16px', backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', borderRadius: '8px', color: '#fca5a5', fontSize: '14px', marginBottom: '24px', lineHeight: '1.5' }}>
-            {error}
+      <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+        {message.text && (
+          <div style={{ background: message.isError ? 'rgba(66,32,32,0.5)' : 'rgba(32,66,45,0.5)', border: '1px solid', borderColor: message.isError ? '#f87171' : '#4ade80', color: message.isError ? '#f87171' : '#4ade80', padding: '12px', borderRadius: '8px', marginBottom: '24px', fontSize: '14px' }}>
+            {message.text}
           </div>
         )}
-
-        {/* --- SIGN IN FORM --- */}
-        {!isSignUp && (
-          <form onSubmit={handleLoginSubmit}>
-            <div>
-              <label style={labelStyle}>EMAIL ADDRESS</label>
-              <input 
-                type="email" 
-                placeholder="name@example.com" 
-                value={email} 
-                onChange={(e) => setEmail(e.target.value)} 
-                required 
-                style={inputStyle} 
-              />
-            </div>
-            
-            <div style={{ position: 'relative' }}>
-              <label style={labelStyle}>PASSWORD</label>
-              <input 
-                type={showPassword ? 'text' : 'password'} 
-                placeholder="••••••••" 
-                value={password} 
-                onChange={(e) => setPassword(e.target.value)} 
-                required 
-                style={inputStyle} 
-              />
-              <button type="button" onClick={() => setShowPassword(!showPassword)} style={eyeBtnStyle}>
-                {showPassword ? 'HIDE' : 'SHOW'}
-              </button>
-            </div>
-
-            <button type="submit" disabled={loading} style={{ width: '100%', padding: '14px', backgroundColor: '#818cf8', color: '#ffffff', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: '600', cursor: 'pointer' }}>
-              {loading ? 'Authenticating...' : 'Sign In'}
-            </button>
-          </form>
-        )}
-
-        {/* --- MULTI-STEP SIGN UP FORM --- */}
-        {isSignUp && (
-          <>
-            {step === 1 && (
-              <form onSubmit={handleStepOneSubmit}>
-                <div style={{ display: 'flex', gap: '12px' }}>
-                  <div style={{ flex: 1 }}>
-                    <label style={labelStyle}>FIRST NAME</label>
-                    <input 
-                      type="text" 
-                      placeholder="John" 
-                      value={firstName} 
-                      onChange={(e) => setFirstName(e.target.value)} 
-                      required 
-                      style={inputStyle} 
-                    />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <label style={labelStyle}>LAST NAME</label>
-                    <input 
-                      type="text" 
-                      placeholder="Doe" 
-                      value={lastName} 
-                      onChange={(e) => setLastName(e.target.value)} 
-                      required 
-                      style={inputStyle} 
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label style={labelStyle}>CHOOSE USERNAME</label>
-                  <input 
-                    type="text" 
-                    placeholder="e.g. tarun1" 
-                    value={username} 
-                    onChange={(e) => setUsername(e.target.value)} 
-                    required 
-                    style={inputStyle} 
-                  />
-                </div>
-                <div>
-                  <label style={labelStyle}>EMAIL ADDRESS</label>
-                  <input 
-                    type="email" 
-                    placeholder="name@example.com" 
-                    value={email} 
-                    onChange={(e) => setEmail(e.target.value)} 
-                    required 
-                    style={inputStyle} 
-                  />
-                </div>
-                <button type="submit" style={{ width: '100%', padding: '14px', backgroundColor: '#818cf8', color: '#ffffff', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: '600', cursor: 'pointer' }}>
-                  Next Step
-                </button>
-              </form>
-            )}
-
-            {step === 2 && (
-              <form onSubmit={handleStepTwoSubmit}>
-                <div style={{ position: 'relative' }}>
-                  <label style={labelStyle}>CREATE PASSWORD</label>
-                  <input 
-                    type={showPassword ? 'text' : 'password'} 
-                    placeholder="••••••••" 
-                    value={password} 
-                    onChange={(e) => setPassword(e.target.value)} 
-                    required 
-                    style={inputStyle} 
-                  />
-                  <button type="button" onClick={() => setShowPassword(!showPassword)} style={eyeBtnStyle}>
-                    {showPassword ? 'HIDE' : 'SHOW'}
-                  </button>
-                </div>
-
-                <div style={{ position: 'relative', marginTop: '4px' }}>
-                  <label style={labelStyle}>CONFIRM PASSWORD</label>
-                  <input 
-                    type={showConfirmPassword ? 'text' : 'password'} 
-                    placeholder="••••••••" 
-                    value={confirmPassword} 
-                    onChange={(e) => setConfirmPassword(e.target.value)} 
-                    required 
-                    style={inputStyle} 
-                  />
-                  <button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} style={eyeBtnStyle}>
-                    {showConfirmPassword ? 'HIDE' : 'SHOW'}
-                  </button>
-                </div>
-
-                <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
-                  <button type="button" onClick={() => setStep(1)} style={{ padding: '14px 24px', backgroundColor: '#1e293b', color: '#94a3b8', border: '1px solid #334155', borderRadius: '8px', fontSize: '16px', fontWeight: '600', cursor: 'pointer' }}>
-                    Back
-                  </button>
-                  <button type="submit" disabled={loading} style={{ flex: 1, padding: '14px', backgroundColor: '#818cf8', color: '#ffffff', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: '600', cursor: 'pointer' }}>
-                    {loading ? 'Creating Account...' : 'Complete Sign Up'}
-                  </button>
-                </div>
-              </form>
-            )}
-          </>
-        )}
-
-        <div style={{ textAlign: 'center', marginTop: '28px', borderTop: '1px solid #1e293b', paddingTop: '20px' }}>
-          <span style={{ color: '#64748b', fontSize: '14px' }}>
-            {isSignUp ? 'Already have an account?' : 'Need an account?'}
-            <button
-              type="button"
-              onClick={() => {
-                setIsSignUp(!isSignUp);
-                setStep(1);
-                setError('');
-              }}
-              style={linkStyle}
-            >
-              {isSignUp ? 'Sign In' : 'Create One'}
-            </button>
-          </span>
-        </div>
-
       </div>
+
+      {/* CORE SPECIFICATION SWITCHBOARD */}
+      {!subscription ? (
+        <div style={{ maxWidth: '1200px', margin: '0 auto', textAlign: 'center', padding: '20px 0' }}>
+          <h2 style={{ fontSize: '32px', fontWeight: '800', marginBottom: '8px', letterSpacing: '-0.025em' }}>Select an Infrastructure Plan</h2>
+          <p style={{ color: '#64748b', marginBottom: '48px', fontSize: '15px' }}>Unlock system mapping and real-time parameters by completing configuration setup.</p>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '24px', maxWidth: '1100px', margin: '0 auto' }}>
+            <div style={cardStyle}>
+              <h3 style={{ fontSize: '20px', margin: '0 0 8px 0', fontWeight: '700' }}>Basic Plan</h3>
+              <div style={{ fontSize: '28px', fontWeight: '800', color: '#818cf8', marginBottom: '16px' }}>
+                ₹99 <span style={{ fontSize: '14px', color: '#64748b', fontWeight: 'normal' }}>/mo</span>
+              </div>
+              <p style={{ color: '#94a3b8', fontSize: '13.5px', marginBottom: '32px', lineHeight: '1.6', flexGrow: 1 }}>Access core logging dashboards and storage features.</p>
+              <button onClick={() => handleSelectPlan(1)} disabled={saveLoading} style={{ background: '#1e293b', color: '#ffffff', border: '1px solid #334155', borderRadius: '8px', padding: '12px', fontWeight: '600', cursor: 'pointer', width: '100%' }}>Select Basic Tier</button>
+            </div>
+
+            <div style={{ ...cardStyle, border: '2px solid #818cf8' }}>
+              <h3 style={{ fontSize: '20px', margin: '0 0 8px 0', fontWeight: '700' }}>Pro Plan</h3>
+              <div style={{ fontSize: '28px', fontWeight: '800', color: '#10b981', marginBottom: '16px' }}>
+                ₹299 <span style={{ fontSize: '14px', color: '#64748b', fontWeight: 'normal' }}>/mo</span>
+              </div>
+              <p style={{ color: '#94a3b8', fontSize: '13.5px', marginBottom: '32px', lineHeight: '1.6', flexGrow: 1 }}>Unlock analytical parameters and high speed maps.</p>
+              <button onClick={() => handleSelectPlan(2)} disabled={saveLoading} style={{ background: '#818cf8', color: '#ffffff', border: 'none', borderRadius: '8px', padding: '12px', fontWeight: '600', cursor: 'pointer', width: '100%' }}>Select Pro Tier</button>
+            </div>
+
+            <div style={cardStyle}>
+              <h3 style={{ fontSize: '20px', margin: '0 0 8px 0', fontWeight: '700' }}>Enterprise Plan</h3>
+              <div style={{ fontSize: '28px', fontWeight: '800', color: '#f59e0b', marginBottom: '16px' }}>
+                ₹499 <span style={{ fontSize: '14px', color: '#64748b', fontWeight: 'normal' }}>/mo</span>
+              </div>
+              <p style={{ color: '#94a3b8', fontSize: '13.5px', marginBottom: '32px', lineHeight: '1.6', flexGrow: 1 }}>Dedicated infrastructure threads and premium access nodes.</p>
+              <button onClick={() => handleSelectPlan(3)} disabled={saveLoading} style={{ background: '#1e293b', color: '#ffffff', border: '1px solid #334155', borderRadius: '8px', padding: '12px', fontWeight: '600', cursor: 'pointer', width: '100%' }}>Select Enterprise Tier</button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* SYNCHRONIZED DASHBOARD VIEWPANELS */
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px', maxWidth: '1200px', margin: '0 auto' }}>
+          
+          <div style={cardStyle}>
+            <label style={labelStyle}>Active System Profiles</label>
+            <div style={metricStyle}>{activeUserCount} {activeUserCount === 1 ? 'User' : 'Users'} Registered</div>
+            <p style={{ color: '#64748b', margin: '0', fontSize: '13px' }}>
+              User ID Reference: <span style={{ color: '#94a3b8', fontFamily: 'monospace' }}>{profile?.username || 'anonymous'}</span>
+            </p>
+          </div>
+
+          <div style={cardStyle}>
+            <label style={labelStyle}>Total Company Income</label>
+            <div style={{ ...metricStyle, color: '#10b981' }}>₹{totalIncome}</div>
+            <p style={{ color: '#64748b', margin: '0', fontSize: '13px' }}>Calculated dynamically based on active system tier choices.</p>
+          </div>
+
+          <div style={cardStyle}>
+            <label style={labelStyle}>Account Credentials Control</label>
+            <form onSubmit={handleUpdateCredentials}>
+              <input type="email" value={emailInput} onChange={(e) => setEmailInput(e.target.value)} style={inputStyle} required />
+              <input type="password" placeholder="Leave blank to keep unchanged" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} style={inputStyle} />
+              <button type="submit" style={{ background: '#818cf8', color: '#ffffff', border: 'none', borderRadius: '8px', padding: '12px', fontWeight: '600', width: '100%', cursor: 'pointer' }}>Save Configuration changes</button>
+            </form>
+          </div>
+
+          <div style={cardStyle}>
+            <label style={labelStyle}>Active Specifications</label>
+            <div style={{ fontSize: '26px', fontWeight: '800', marginBottom: '12px' }}>
+              {profile?.subscription_tier && profile.subscription_tier !== 'none' ? profile.subscription_tier : 'Active User'} <span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', marginLeft: '8px' }}>ACTIVE</span>
+            </div>
+            <p style={{ color: '#64748b', margin: '0 0 20px 0', fontSize: '13px', lineHeight: '1.5' }}>
+              System Mapping Plan ID: {subscription?.plan_id || 'N/A'}<br />
+              Cycle Log End Date: {subscription?.end_date ? new Date(subscription.end_date).toLocaleDateString() : '30 Days Remaining'}
+            </p>
+            <button onClick={handleCancelSubscription} disabled={saveLoading} style={{ background: 'transparent', color: '#f87171', border: '1px solid rgba(248,113,113,0.2)', padding: '10px', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', width: '100%' }}>
+              Cancel Active Subscription Plan
+            </button>
+          </div>
+
+          {/* REALTIME TIME CAPPED COUNTDOWN METRIC */}
+          <div style={cardStyle}>
+            <label style={labelStyle}>Time Capped Countdown</label>
+            <div style={{ ...metricStyle, color: daysRemaining <= 5 ? '#f87171' : '#818cf8' }}>
+              {daysRemaining}
+            </div>
+            <div style={{ fontSize: '13px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '16px', letterSpacing: '0.05em' }}>
+              Days until expiration
+            </div>
+            <div style={{ width: '100%', height: '6px', background: '#1e293b', borderRadius: '3px', overflow: 'hidden' }}>
+              <div style={{ width: `${(daysRemaining / 30) * 100}%`, height: '100%', background: daysRemaining <= 5 ? '#f87171' : '#818cf8', transition: 'width 0.3s ease' }} />
+            </div>
+          </div>
+
+        </div>
+      )}
     </div>
-  );
+  )
 }
