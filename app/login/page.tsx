@@ -2,12 +2,11 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-// Step out of login, out of app, and directly into your lib folder
 import { supabase } from '../../lib/supabase'; 
 
 export default function LoginPage() {
   const router = useRouter();
-  const [isSignUp, setIsSignUp] = useState(false); // 🚀 Set to false so "Sign In" is your starting screen
+  const [isSignUp, setIsSignUp] = useState(false); 
   const [step, setStep] = useState(1);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -113,21 +112,25 @@ export default function LoginPage() {
 
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
-      setLoading(false);
       return;
     }
 
     if (!validatePassword(password)) {
       setError('Password must contain letters, numbers, and at least one special character.');
-      setLoading(false);
       return;
     }
 
     try {
-      // 1. Authenticate with Supabase Auth
+      // Create clean safe deployment origins dynamic variable
+      const redirectTarget = typeof window !== 'undefined' ? `${window.location.origin}/dashboard` : '';
+
+      // 1. Authenticate with Supabase Auth + Add redirect security fallback context options
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
+        email: email.toLowerCase().trim(),
         password,
+        options: {
+          emailRedirectTo: redirectTarget,
+        }
       });
 
       if (authError) throw authError;
@@ -171,7 +174,7 @@ export default function LoginPage() {
 
     try {
       const { error: loginError } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.toLowerCase().trim(),
         password,
       });
 
