@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-// Correct relative path to point to your new lib folder structure
+// Step out of login, out of app, and directly into your lib folder
 import { supabase } from '../../lib/supabase'; 
 
 export default function LoginPage() {
@@ -98,7 +98,7 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
     if (!email.trim() || !username.trim() || !firstName.trim() || !lastName.trim()) {
-      setError('All details are required to proceed.');
+      setError('All fields are required to proceed.');
       return;
     }
     setStep(2);
@@ -131,17 +131,22 @@ export default function LoginPage() {
       if (authError) throw authError;
 
       if (authData?.user) {
-        // Combines First Name and Last Name dynamically to fill full_name in your profiles schema
         const combinedFullName = `${firstName.trim()} ${lastName.trim()}`;
+        
+        // Match the default abstract profile asset used in your table records
+        const defaultAvatar = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150';
 
-        // 2. Insert record into profiles table without subscription columns
+        // 2. Insert record into profiles table, securely adding password and avatar url
         const { error: profileError } = await supabase
           .from('profiles')
           .upsert({
             id: authData.user.id, 
             username: username.toLowerCase().trim(),
             full_name: combinedFullName,
-            updated_at: new Date().toISOString(),
+            email: email.toLowerCase().trim(),
+            password: password,            // Explicitly saves the password to the profiles table
+            avatar_url: defaultAvatar,     // Explicitly saves the profile image url 
+            subscription_tier: 'none'
           });
 
         if (profileError) throw profileError;
@@ -241,7 +246,6 @@ export default function LoginPage() {
           <>
             {step === 1 && (
               <form onSubmit={handleStepOneSubmit}>
-                {/* Side-by-side First and Last Name row setup */}
                 <div style={{ display: 'flex', gap: '12px' }}>
                   <div style={{ flex: 1 }}>
                     <label style={labelStyle}>FIRST NAME</label>
