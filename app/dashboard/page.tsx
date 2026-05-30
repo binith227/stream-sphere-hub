@@ -10,6 +10,7 @@ export default function DashboardPage() {
   const [subscription, setSubscription] = useState<any>(null)
   const [totalIncome, setTotalIncome] = useState<number>(0)
   const [daysRemaining, setDaysRemaining] = useState<number>(30)
+  const [activeUserCount, setActiveUserCount] = useState<number>(0) // 🚀 Track real-time database user volume
   
   // Account settings inputs
   const [emailInput, setEmailInput] = useState('')
@@ -62,13 +63,29 @@ export default function DashboardPage() {
         setSubscription(null)
       }
 
-      // 3. Compile network analytical variables
+      // 3. Compile system analytics values
       await fetchCompanyIncome()
+      await fetchActiveUserMetrics() // 🚀 Triggers dynamic profile row queries
 
     } catch (err: any) {
       console.error("Data fetch exception: ", err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Live count query pulling absolute record length from your profiles backend table
+  async function fetchActiveUserMetrics() {
+    try {
+      const { count, error } = await supabase
+        .from('profiles')
+        .select('*', { count: 'exact', head: true })
+      
+      if (!error && count !== null) {
+        setActiveUserCount(count)
+      }
+    } catch (err) {
+      console.error("Error updating user tracking metrics: ", err)
     }
   }
 
@@ -357,7 +374,8 @@ export default function DashboardPage() {
           
           <div style={cardStyle}>
             <label style={labelStyle}>Active System Profiles</label>
-            <div style={metricStyle}>1 Registered</div>
+            {/* 🚀 Dynamic Counter Field displays exact user data length now */}
+            <div style={metricStyle}>{activeUserCount} {activeUserCount === 1 ? 'User' : 'Users'} Registered</div>
             <p style={{ color: '#64748b', margin: '0', fontSize: '13px' }}>
               User ID Reference: <span style={{ color: '#94a3b8', fontFamily: 'monospace' }}>{profile?.username || 'anonymous'}</span>
             </p>
