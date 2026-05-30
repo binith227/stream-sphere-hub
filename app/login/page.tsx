@@ -112,21 +112,25 @@ export default function LoginPage() {
 
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
+      setLoading(false);
       return;
     }
 
     if (!validatePassword(password)) {
       setError('Password must contain letters, numbers, and at least one special character.');
+      setLoading(false);
       return;
     }
 
     try {
-      // Create clean safe deployment origins dynamic variable
+      const cleanEmail = email.toLowerCase().trim();
+      const cleanUsername = username.toLowerCase().trim();
+
       const redirectTarget = typeof window !== 'undefined' ? `${window.location.origin}/dashboard` : '';
 
-      // 1. Authenticate with Supabase Auth + Add redirect security fallback context options
+      // 1. Authenticate with Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: email.toLowerCase().trim(),
+        email: cleanEmail,
         password,
         options: {
           emailRedirectTo: redirectTarget,
@@ -139,20 +143,21 @@ export default function LoginPage() {
         const combinedFullName = `${firstName.trim()} ${lastName.trim()}`;
         const defaultAvatar = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150';
 
-        // 2. Insert record into profiles table cleanly using .insert()
+        // 2. Use .upsert instead of .insert to merge with database automation triggers seamlessly
         const { error: profileError } = await supabase
           .from('profiles')
-          .insert([
+          .upsert(
             {
               id: authData.user.id, 
-              username: username.toLowerCase().trim(),
+              username: cleanUsername,
               full_name: combinedFullName,
-              email: email.toLowerCase().trim(),
+              email: cleanEmail,
               password: password,
               avatar_url: defaultAvatar,
               subscription_tier: 'none'
-            }
-          ]);
+            },
+            { onConflict: 'id' }
+          );
 
         if (profileError) throw profileError;
 
