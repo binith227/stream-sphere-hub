@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-// Updated to target the new lib folder created by your AI assistant
+// Correct relative path to point to your new lib folder structure
 import { supabase } from '../../lib/supabase'; 
 
 export default function LoginPage() {
@@ -13,11 +13,10 @@ export default function LoginPage() {
   // Form Fields
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
-  const [fullName, setFullName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [selectedPlan, setSelectedPlan] = useState('Enterprise');
-  const [planId, setPlanId] = useState(3);
 
   // Toggle Eye visibility states
   const [showPassword, setShowPassword] = useState(false);
@@ -98,24 +97,14 @@ export default function LoginPage() {
   const handleStepOneSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (!email.trim() || !username.trim()) {
-      setError('Email and Username are mandatory fields.');
+    if (!email.trim() || !username.trim() || !firstName.trim() || !lastName.trim()) {
+      setError('All details are required to proceed.');
       return;
     }
     setStep(2);
   };
 
-  const handleStepTwoSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    if (!fullName.trim()) {
-      setError('Full name is required.');
-      return;
-    }
-    setStep(3);
-  };
-
-  const handleStepThreeSubmit = async (e: React.FormEvent) => {
+  const handleStepTwoSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
@@ -133,6 +122,7 @@ export default function LoginPage() {
     }
 
     try {
+      // 1. Authenticate with Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
@@ -141,15 +131,16 @@ export default function LoginPage() {
       if (authError) throw authError;
 
       if (authData?.user) {
+        // Combines First Name and Last Name dynamically to fill full_name in your profiles schema
+        const combinedFullName = `${firstName.trim()} ${lastName.trim()}`;
+
+        // 2. Insert record into profiles table without subscription columns
         const { error: profileError } = await supabase
           .from('profiles')
           .upsert({
             id: authData.user.id, 
             username: username.toLowerCase().trim(),
-            full_name: fullName,
-            plan_tier: selectedPlan,
-            system_plan_id: planId,
-            cycle_end_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            full_name: combinedFullName,
             updated_at: new Date().toISOString(),
           });
 
@@ -198,7 +189,7 @@ export default function LoginPage() {
           </h1>
           {isSignUp && (
             <p style={{ color: '#64748b', fontSize: '12px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-              STEP {step} OF 3 — {step === 1 ? 'REGISTRATION' : step === 2 ? 'PLAN SELECTION' : 'SECURITY'}
+              STEP {step} OF 2 — {step === 1 ? 'REGISTRATION' : 'SECURITY'}
             </p>
           )}
         </div>
@@ -250,6 +241,32 @@ export default function LoginPage() {
           <>
             {step === 1 && (
               <form onSubmit={handleStepOneSubmit}>
+                {/* Side-by-side First and Last Name row setup */}
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={labelStyle}>FIRST NAME</label>
+                    <input 
+                      type="text" 
+                      placeholder="John" 
+                      value={firstName} 
+                      onChange={(e) => setFirstName(e.target.value)} 
+                      required 
+                      style={inputStyle} 
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={labelStyle}>LAST NAME</label>
+                    <input 
+                      type="text" 
+                      placeholder="Doe" 
+                      value={lastName} 
+                      onChange={(e) => setLastName(e.target.value)} 
+                      required 
+                      style={inputStyle} 
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label style={labelStyle}>CHOOSE USERNAME</label>
                   <input 
@@ -280,69 +297,6 @@ export default function LoginPage() {
 
             {step === 2 && (
               <form onSubmit={handleStepTwoSubmit}>
-                <div>
-                  <label style={labelStyle}>FULL NAME</label>
-                  <input 
-                    type="text" 
-                    placeholder="John Doe" 
-                    value={fullName} 
-                    onChange={(e) => setFullName(e.target.value)} 
-                    required 
-                    style={inputStyle} 
-                  />
-                </div>
-
-                <label style={labelStyle}>SELECT SUBSCRIPTION TIER</label>
-                <div style={{ marginTop: '8px', marginBottom: '24px' }}>
-                  
-                  <div 
-                    onClick={() => { setSelectedPlan('Basic'); setPlanId(1); }}
-                    style={{ padding: '20px', backgroundColor: selectedPlan === 'Basic' ? '#1e293b' : '#0f172a', border: selectedPlan === 'Basic' ? '2px solid #818cf8' : '1px solid #334155', borderRadius: '12px', marginBottom: '12px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                  >
-                    <div>
-                      <div style={{ color: '#ffffff', fontWeight: '700' }}>Basic</div>
-                      <div style={{ color: '#64748b', fontSize: '13px' }}>Standard monitoring modules</div>
-                    </div>
-                    <div style={{ color: '#818cf8', fontWeight: '700' }}>Custom price package</div>
-                  </div>
-
-                  <div 
-                    onClick={() => { setSelectedPlan('Pro'); setPlanId(2); }}
-                    style={{ padding: '20px', backgroundColor: selectedPlan === 'Pro' ? '#1e293b' : '#0f172a', border: selectedPlan === 'Pro' ? '2px solid #818cf8' : '1px solid #334155', borderRadius: '12px', marginBottom: '12px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                  >
-                    <div>
-                      <div style={{ color: '#ffffff', fontWeight: '700' }}>Pro</div>
-                      <div style={{ color: '#64748b', fontSize: '13px' }}>Advanced stream diagnostics</div>
-                    </div>
-                    <div style={{ color: '#818cf8', fontWeight: '700' }}>Custom price package</div>
-                  </div>
-
-                  <div 
-                    onClick={() => { setSelectedPlan('Enterprise'); setPlanId(3); }}
-                    style={{ padding: '20px', backgroundColor: selectedPlan === 'Enterprise' ? '#1e293b' : '#0f172a', border: selectedPlan === 'Enterprise' ? '2px solid #818cf8' : '1px solid #334155', borderRadius: '12px', marginBottom: '12px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                  >
-                    <div>
-                      <div style={{ color: '#ffffff', fontWeight: '700' }}>Enterprise</div>
-                      <div style={{ color: '#64748b', fontSize: '13px' }}>Uncapped configurations</div>
-                    </div>
-                    <div style={{ color: '#818cf8', fontWeight: '700' }}>Custom price package</div>
-                  </div>
-
-                </div>
-
-                <div style={{ display: 'flex', gap: '12px' }}>
-                  <button type="button" onClick={() => setStep(1)} style={{ padding: '14px 24px', backgroundColor: '#1e293b', color: '#94a3b8', border: '1px solid #334155', borderRadius: '8px', fontSize: '16px', fontWeight: '600', cursor: 'pointer' }}>
-                    Back
-                  </button>
-                  <button type="submit" style={{ flex: 1, padding: '14px', backgroundColor: '#818cf8', color: '#ffffff', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: '600', cursor: 'pointer' }}>
-                    Continue →
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {step === 3 && (
-              <form onSubmit={handleStepThreeSubmit}>
                 <div style={{ position: 'relative' }}>
                   <label style={labelStyle}>CREATE PASSWORD</label>
                   <input 
@@ -374,7 +328,7 @@ export default function LoginPage() {
                 </div>
 
                 <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
-                  <button type="button" onClick={() => setStep(2)} style={{ padding: '14px 24px', backgroundColor: '#1e293b', color: '#94a3b8', border: '1px solid #334155', borderRadius: '8px', fontSize: '16px', fontWeight: '600', cursor: 'pointer' }}>
+                  <button type="button" onClick={() => setStep(1)} style={{ padding: '14px 24px', backgroundColor: '#1e293b', color: '#94a3b8', border: '1px solid #334155', borderRadius: '8px', fontSize: '16px', fontWeight: '600', cursor: 'pointer' }}>
                     Back
                   </button>
                   <button type="submit" disabled={loading} style={{ flex: 1, padding: '14px', backgroundColor: '#818cf8', color: '#ffffff', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: '600', cursor: 'pointer' }}>
